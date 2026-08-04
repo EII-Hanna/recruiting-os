@@ -1,0 +1,41 @@
+{
+  "name": "RecruitingOS - Google Workspace Sync",
+  "nodes": [
+    {
+      "parameters": {"rule": {"interval": [{"field": "minutes", "minutesInterval": 15}]}},
+      "id": "schedule",
+      "name": "Alle 15 Minuten",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [260, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.SUPABASE_URL}}/functions/v1/google-sync",
+        "sendHeaders": true,
+        "headerParameters": {"parameters": [
+          {"name": "Authorization", "value": "=Bearer {{$env.RECRUITING_OS_SYNC_JWT}}"},
+          {"name": "apikey", "value": "={{$env.SUPABASE_ANON_KEY}}"},
+          {"name": "Content-Type", "value": "application/json"}
+        ]},
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={\"organization_id\":\"{{$env.RECRUITING_OS_ORGANIZATION_ID}}\",\"sync\":\"all\"}",
+        "options": {"timeout": 120000}
+      },
+      "id": "sync",
+      "name": "Gmail & Kalender synchronisieren",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [520, 300]
+    }
+  ],
+  "connections": {
+    "Alle 15 Minuten": {"main": [[{"node": "Gmail & Kalender synchronisieren", "type": "main", "index": 0}]]}
+  },
+  "active": false,
+  "settings": {"executionOrder": "v1"},
+  "versionId": "7c87f5e8-20f1-4be3-aeb4-75a58c99d901"
+}
