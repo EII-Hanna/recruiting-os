@@ -1,5 +1,7 @@
 -- RecruitingOS: Meta lead attribution and campaign performance
 
+alter table public.funnel_submissions alter column funnel_id drop not null;
+
 alter table public.funnel_submissions
   add column if not exists meta_lead_id text,
   add column if not exists meta_form_id text,
