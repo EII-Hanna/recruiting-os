@@ -1,0 +1,79 @@
+name: Deploy RecruitingOS to Supabase
+
+on:
+  workflow_dispatch:
+    inputs:
+      deploy_database:
+        description: "Datenbankmigrationen ausführen"
+        required: true
+        default: true
+        type: boolean
+      deploy_functions:
+        description: "Edge Functions deployen"
+        required: true
+        default: true
+        type: boolean
+
+concurrency:
+  group: recruiting-os-supabase-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+      PROJECT_REF: kmmqoqirdzdycxyoamqr
+
+    steps:
+      - name: Repository auschecken
+        uses: actions/checkout@v4
+
+      - name: Supabase CLI installieren
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Pflicht-Secrets prüfen
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$SUPABASE_ACCESS_TOKEN" || (echo "SUPABASE_ACCESS_TOKEN fehlt" && exit 1)
+          test -n "$SUPABASE_DB_PASSWORD" || (echo "SUPABASE_DB_PASSWORD fehlt" && exit 1)
+
+      - name: Projekt verknüpfen
+        run: supabase link --project-ref "$PROJECT_REF" --password "$SUPABASE_DB_PASSWORD"
+
+      - name: Bereits manuell ausgeführte Basismigrationen registrieren
+        if: ${{ inputs.deploy_database }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # 001 und 002 wurden beim initialen Aufbau bereits manuell im SQL Editor ausgeführt.
+          # Durch repair werden sie nur in der Supabase-Migrationshistorie registriert.
+          supabase migration repair 001 --status applied || true
+          supabase migration repair 002 --status applied || true
+
+      - name: Ausstehende Datenbankmigrationen ausführen
+        if: ${{ inputs.deploy_database }}
+        run: supabase db push --include-all --password "$SUPABASE_DB_PASSWORD"
+
+      - name: OpenAI Secret für Edge Functions setzen
+        if: ${{ inputs.deploy_functions && secrets.OPENAI_API_KEY != '' }}
+        shell: bash
+        run: |
+          supabase secrets set \
+            OPENAI_API_KEY="${{ secrets.OPENAI_API_KEY }}" \
+            OPENAI_CV_MODEL="${{ vars.OPENAI_CV_MODEL || 'gpt-5-mini' }}" \
+            --project-ref "$PROJECT_REF"
+
+      - name: Edge Functions deployen
+        if: ${{ inputs.deploy_functions }}
+        run: supabase functions deploy --project-ref "$PROJECT_REF" --use-api
+
+      - name: Deployment abgeschlossen
+        run: |
+          echo "RecruitingOS Supabase Deployment abgeschlossen."
+          echo "Projekt: $PROJECT_REF"
