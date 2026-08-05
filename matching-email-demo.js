@@ -10,24 +10,36 @@
     '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
   }[c]));
 
-  let injected = false;
   let demoContext = null;
+  let loadingContext = false;
 
   async function getContext() {
-    const { data: orgs } = await db.rpc('my_organizations');
+    const { data: orgs, error: orgError } = await db.rpc('my_organizations');
+    if (orgError) throw orgError;
     const orgId = orgs?.[0]?.organization_id;
-    if (!orgId) return null;
+    if (!orgId) throw new Error('Keine Organisation gefunden.');
 
     const [candidateRes, companyRes, jobRes] = await Promise.all([
-      db.from('candidates').select('*').eq('organization_id', orgId).ilike('first_name','William').ilike('last_name','Hanna').limit(1),
+      db.from('candidates').select('*').eq('organization_id', orgId).order('created_at',{ascending:true}),
       db.from('companies').select('*').eq('organization_id', orgId).order('created_at',{ascending:true}).limit(1),
       db.from('jobs').select('*,company:companies(name)').eq('organization_id', orgId).order('created_at',{ascending:true}).limit(1)
     ]);
 
-    const candidate = candidateRes.data?.[0];
+    if (candidateRes.error) throw candidateRes.error;
+    if (companyRes.error) throw companyRes.error;
+    if (jobRes.error) console.warn('Demo-Vakanz konnte nicht geladen werden:', jobRes.error.message);
+
+    const candidates = candidateRes.data || [];
+    const candidate = candidates.find(item =>
+      `${item.first_name || ''} ${item.last_name || ''}`.trim().toLowerCase() === 'william hanna'
+    ) || candidates.find(item =>
+      `${item.first_name || ''} ${item.last_name || ''}`.toLowerCase().includes('william')
+    );
     const company = companyRes.data?.[0];
     const job = jobRes.data?.[0] || null;
-    if (!candidate || !company) return null;
+
+    if (!candidate) throw new Error('William Hanna wurde im Kandidatenbestand nicht gefunden.');
+    if (!company) throw new Error('Es wurde noch kein Unternehmen gefunden.');
 
     return { orgId, candidate, company, job };
   }
@@ -36,7 +48,7 @@
     const c = ctx.candidate;
     const companyName = ctx.company.name || 'Ihr Unternehmen';
     const role = ctx.job?.title || 'Ihre aktuelle Vakanz';
-    const firstName = ctx.company.contact_name?.split(' ')?.[0] || 'Guten Tag';
+    const greeting = ctx.company.contact_name ? `Hallo ${ctx.company.contact_name}` : 'Guten Tag';
     const skills = Array.isArray(c.skills) && c.skills.length ? c.skills.slice(0,4).join(', ') : 'Vertrieb, Beratung und digitale Prozesse';
     const experience = c.years_experience ? `${c.years_experience} Jahre Berufserfahrung` : 'mehrjährige relevante Berufserfahrung';
     const location = c.location || 'flexibler Standort';
@@ -44,52 +56,69 @@
 
     return {
       subject: `Passendes Kandidatenprofil für ${role}`,
-      body: `${firstName},\n\nfür Ihre Position „${role}“ habe ich ein Profil identifiziert, das fachlich und vom bisherigen Werdegang sehr gut zu ${companyName} passt.\n\nKurzprofil:\n• ${experience}\n• Schwerpunkte: ${skills}\n• Standort: ${location}\n• Verfügbarkeit: ${availability}\n\nIm Anhang erhalten Sie das anonymisierte Kandidatenprofil. Besonders relevant sind die Verbindung aus operativer Erfahrung, Vertriebsverständnis und digitaler Prozesskompetenz.\n\nWann passt Ihnen ein kurzer Austausch zum Profil?\n\nBeste Grüße\nRecruitingOS Demo`,
-      role,
-      skills,
-      experience,
-      location,
-      availability
+      body: `${greeting},\n\nfür Ihre Position „${role}“ habe ich ein Profil identifiziert, das fachlich und vom bisherigen Werdegang sehr gut zu ${companyName} passt.\n\nKurzprofil:\n• ${experience}\n• Schwerpunkte: ${skills}\n• Standort: ${location}\n• Verfügbarkeit: ${availability}\n\nIm Anhang erhalten Sie das anonymisierte Kandidatenprofil. Besonders relevant sind die Verbindung aus operativer Erfahrung, Vertriebsverständnis und digitaler Prozesskompetenz.\n\nWann passt Ihnen ein kurzer Austausch zum Profil?\n\nBeste Grüße\nRecruitingOS Demo`,
+      role, skills, experience, location, availability
     };
+  }
+
+  function getHost() {
+    const matching = document.getElementById('matching');
+    if (!matching) return null;
+    let host = document.getElementById('matchingDemoHost');
+    if (!host) {
+      host = document.createElement('div');
+      host.id = 'matchingDemoHost';
+      host.className = 'matching-demo-host';
+      const list = document.getElementById('matchingList');
+      matching.insertBefore(host, list || null);
+    }
+    return host;
   }
 
   async function injectDemo() {
     const matching = document.getElementById('matching');
-    if (!matching || !matching.classList.contains('active') || injected) return;
+    if (!matching?.classList.contains('active')) return;
+    const host = getHost();
+    if (!host || host.querySelector('[data-matching-demo]') || loadingContext) return;
 
-    demoContext = await getContext();
-    if (!demoContext) return;
+    loadingContext = true;
+    host.innerHTML = `<article class="matching-demo-card matching-demo-loading" data-matching-demo><span class="matching-demo-kicker">LIVE-DEMO · KI-MATCHING</span><h3>William-Hanna-Demo wird geladen …</h3><p>Unternehmen und Vakanz werden aus dem CRM gelesen.</p></article>`;
 
-    const mail = buildEmail(demoContext);
-    const candidateName = `${demoContext.candidate.first_name || ''} ${demoContext.candidate.last_name || ''}`.trim();
-    const companyName = demoContext.company.name || 'Unternehmen';
-    const list = document.getElementById('matchingList');
-    const anchor = list || matching;
+    try {
+      demoContext = await getContext();
+      const mail = buildEmail(demoContext);
+      const candidateName = `${demoContext.candidate.first_name || ''} ${demoContext.candidate.last_name || ''}`.trim();
+      const companyName = demoContext.company.name || 'Unternehmen';
 
-    anchor.insertAdjacentHTML('afterbegin', `
-      <article class="matching-demo-card" data-matching-demo>
-        <div class="matching-demo-top">
-          <div>
-            <span class="matching-demo-kicker">LIVE-DEMO · KI-MATCHING</span>
-            <h3>${esc(candidateName)} → ${esc(companyName)}</h3>
-            <p>${esc(mail.role)} · anonymisierte Kundenpräsentation</p>
+      host.innerHTML = `
+        <article class="matching-demo-card" data-matching-demo>
+          <div class="matching-demo-top">
+            <div>
+              <span class="matching-demo-kicker">LIVE-DEMO · KI-MATCHING</span>
+              <h3>${esc(candidateName)} → ${esc(companyName)}</h3>
+              <p>${esc(mail.role)} · anonymisierte Kundenpräsentation</p>
+            </div>
+            <div class="matching-demo-score"><span>Match</span><strong>89%</strong></div>
           </div>
-          <div class="matching-demo-score"><span>Match</span><strong>89%</strong></div>
-        </div>
-        <div class="matching-demo-grid">
-          <div><small>KANDIDAT</small><strong>${esc(candidateName)}</strong><span>${esc(demoContext.candidate.current_title || 'Kandidatenprofil')}</span></div>
-          <div><small>UNTERNEHMEN</small><strong>${esc(companyName)}</strong><span>${esc(demoContext.company.industry || 'Zielunternehmen')}</span></div>
-          <div><small>STATUS</small><strong>Versandbereit</strong><span>Profil anonymisiert</span></div>
-        </div>
-        <div class="matching-demo-actions">
-          <button class="btn" data-demo-preview>Profil ansehen</button>
-          <button class="btn primary" data-demo-email>E-Mail-Vorschau öffnen</button>
-        </div>
-      </article>`);
+          <div class="matching-demo-grid">
+            <div><small>KANDIDAT</small><strong>${esc(candidateName)}</strong><span>${esc(demoContext.candidate.current_title || 'Kandidatenprofil')}</span></div>
+            <div><small>UNTERNEHMEN</small><strong>${esc(companyName)}</strong><span>${esc(demoContext.company.industry || 'Zielunternehmen')}</span></div>
+            <div><small>STATUS</small><strong>Versandbereit</strong><span>Profil anonymisiert</span></div>
+          </div>
+          <div class="matching-demo-actions">
+            <button class="btn" data-demo-preview>Profil ansehen</button>
+            <button class="btn primary" data-demo-email>E-Mail-Vorschau öffnen</button>
+          </div>
+        </article>`;
 
-    injected = true;
-    anchor.querySelector('[data-demo-preview]')?.addEventListener('click', openProfilePreview);
-    anchor.querySelector('[data-demo-email]')?.addEventListener('click', openEmailPreview);
+      host.querySelector('[data-demo-preview]')?.addEventListener('click', openProfilePreview);
+      host.querySelector('[data-demo-email]')?.addEventListener('click', openEmailPreview);
+    } catch (error) {
+      host.innerHTML = `<article class="matching-demo-card matching-demo-error" data-matching-demo><span class="matching-demo-kicker">LIVE-DEMO · KI-MATCHING</span><h3>Demo konnte nicht geladen werden</h3><p>${esc(error.message || error)}</p><button class="btn" data-demo-retry>Erneut laden</button></article>`;
+      host.querySelector('[data-demo-retry]')?.addEventListener('click', () => { host.innerHTML=''; injectDemo(); });
+    } finally {
+      loadingContext = false;
+    }
   }
 
   function openProfilePreview() {
@@ -114,10 +143,7 @@
     const email = company.email || company.contact_email || 'ansprechpartner@unternehmen.de';
     showModal(`
       <div class="matching-demo-modal-head"><div><small>KUNDENVORSTELLUNG</small><h2>E-Mail an ${esc(company.name || 'Kunden')}</h2><p>Demo-Versand · es wird keine echte E-Mail verschickt.</p></div><button class="btn" data-demo-close>Schließen</button></div>
-      <div class="matching-email-meta">
-        <label>An<input value="${esc(email)}" readonly></label>
-        <label>Betreff<input value="${esc(mail.subject)}" readonly></label>
-      </div>
+      <div class="matching-email-meta"><label>An<input value="${esc(email)}" readonly></label><label>Betreff<input value="${esc(mail.subject)}" readonly></label></div>
       <div class="matching-email-body">${esc(mail.body).replace(/\n/g,'<br>')}</div>
       <div class="matching-email-attachment"><span>PDF</span><div><strong>Anonymisiertes_Kandidatenprofil_William_Hanna.pdf</strong><small>Kundenversion · personenbezogene Daten entfernt</small></div><b>bereit</b></div>
       <div class="matching-followup-plan"><span>Heute · E-Mail</span><span>+2 Tage · Follow-up</span><span>+4 Tage · Anruf</span></div>
@@ -139,16 +165,13 @@
   }
 
   const observer = new MutationObserver(() => {
-    if (!document.getElementById('matching')?.classList.contains('active')) {
-      injected = false;
-      document.querySelector('[data-matching-demo]')?.remove();
-      return;
-    }
-    injectDemo();
+    if (document.getElementById('matching')?.classList.contains('active')) injectDemo();
   });
   observer.observe(document.body, { childList:true, subtree:true, attributes:true, attributeFilter:['class'] });
 
   document.addEventListener('click', event => {
-    if (event.target.closest('[data-view="matching"]')) setTimeout(injectDemo, 120);
+    if (event.target.closest('[data-view="matching"]')) setTimeout(injectDemo, 150);
   }, true);
+
+  setTimeout(injectDemo, 600);
 })();
