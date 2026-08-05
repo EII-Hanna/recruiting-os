@@ -14,4 +14,20 @@ document.addEventListener('DOMContentLoaded', () => {
     link.style.marginTop = '12px';
     nav.appendChild(link);
   }
+
+  if (!document.querySelector('link[data-candidate-submissions]')) {
+    const style = document.createElement('link');
+    style.rel = 'stylesheet';
+    style.href = './candidate-submissions.css?v=20260805-1455';
+    style.dataset.candidateSubmissions = '1';
+    document.head.appendChild(style);
+  }
+
+  if (!document.querySelector('script[data-candidate-submissions]')) {
+    const script = document.createElement('script');
+    script.src = './candidate-submissions.js?v=20260805-1455';
+    script.defer = true;
+    script.dataset.candidateSubmissions = '1';
+    document.body.appendChild(script);
+  }
 });
